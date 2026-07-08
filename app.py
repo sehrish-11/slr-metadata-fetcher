@@ -57,8 +57,7 @@ def fetch_metadata_dual_engine(doi):
 st.set_page_config(page_title="SLR Metadata Fetcher", layout="wide")
 st.title("📚 SLR Metadata Fetcher")
 st.markdown(
-    "Upload your team's `.bib` file. The app will extract the DOIs, query **Crossref**, "
-    "and automatically fall back to **Semantic Scholar** if the abstract is missing."
+    "Upload your `.bib` file."
 )
 
 uploaded_file = st.file_uploader("Upload .bib file", type=["bib"])
@@ -71,21 +70,39 @@ if uploaded_file is not None:
     bib_database = bibtexparser.loads(bib_string)
     entries = bib_database.entries
     
-    st.success(f"Found {len(entries)} total entries in the file.")
-    
     # Convert to DataFrame to find DOI column safely
     df = pd.DataFrame(entries)
     
     if 'doi' not in df.columns:
         st.error("No 'doi' field found in this BibTeX file. Please ensure your ACM/IEEE export includes DOIs.")
     else:
-        # Clean up DOIs (remove common URL prefixes if present)
-        df['clean_doi'] = df['doi'].dropna().apply(
+        # --- FIX ADDED HERE: ROBUST DOI EXTRACTION & METRICS ---
+        
+        # 1. Standardize and clean existing DOIs, replacing missing ones with empty strings safely
+        df['clean_doi'] = df['doi'].fillna("").apply(
             lambda x: str(x).replace('https://doi.org/', '').replace('http://doi.org/', '').strip()
         )
-        doi_list = df['clean_doi'].dropna().tolist()
         
-        st.metric(label="Valid DOIs Found", value=len(doi_list))
+        # 2. Filter list to keep only unique entries starting with the official DOI prefix '10.'
+        doi_list = [d for d in df['clean_doi'].unique().tolist() if d and d.startswith('10.')]
+        
+        # 3. Calculate missing items dynamically based on the filtered clean list
+        missing_doi_count = len(entries) - len(doi_list)
+        
+        # 4. Display clear metrics in a 3-column layout
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(label="Total Papers in BibTeX", value=len(entries))
+        with col2:
+            st.metric(label="Valid Unique DOIs Found", value=len(doi_list))
+        with col3:
+            st.metric(
+                label="Papers Missing DOI / Duplicates", 
+                value=missing_doi_count, 
+                delta=f"-{missing_doi_count}" if missing_doi_count > 0 else "0", 
+                delta_color="inverse"
+            )
+        # --------------------------------------------------------
         
         # UI controls for batching
         process_limit = st.slider(
@@ -110,7 +127,7 @@ if uploaded_file is not None:
                 
                 title, abstract = fetch_metadata_dual_engine(doi)
                 results.append({
-                    "BibTeX Index": i + 1,
+                    "Batch Index": i + 1,
                     "DOI": doi,
                     "Fetched Title": title,
                     "Fetched Abstract": abstract
